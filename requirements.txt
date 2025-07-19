@@ -1,11 +1,12 @@
-# Remote Control System - Python Dependencies
-# 
+# Remote Control System - Minimal Dependencies
 # Core functionality works with Python standard library only
-# These are optional dependencies for enhanced features:
 
-# Screen capture (highly recommended for better performance)
+# Optional: Screen capture for better performance (pillow is stable on all platforms)
 pillow>=9.0.0
 
-# Note: pynput removed due to evdev compilation issues on cloud platforms
-# The system will work using Python standard library fallbacks for input control
-# Full functionality is available when running the agent on Windows machines
+# EXPLICITLY AVOID PROBLEMATIC PACKAGES:
+# - pynput causes evdev compilation errors on Linux cloud platforms
+# - evdev is Linux-specific and fails to build on cloud environments
+# 
+# The system includes fallback mechanisms using Python standard library
+# for input control when these packages are not available.

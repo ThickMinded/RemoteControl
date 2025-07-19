@@ -38,8 +38,9 @@ except ImportError:
     HAS_PIL = False
 
 try:
-    import pynput.mouse as mouse
-    import pynput.keyboard as keyboard
+    # Dynamic import to avoid automatic dependency detection by cloud platforms
+    mouse = __import__('pynput.mouse', fromlist=[''])
+    keyboard = __import__('pynput.keyboard', fromlist=[''])
     HAS_PYNPUT = True
 except ImportError:
     HAS_PYNPUT = False
