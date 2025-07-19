@@ -1,0 +1,14 @@
+{
+    "server_url": "https://web-production-463b89.up.railway.app",
+    "agent_name": "University Remote Control Agent",
+    "version": "1.0.0",
+    "settings": {
+        "screen_fps": 1,
+        "screen_quality": 50,
+        "screen_width": 800,
+        "screen_height": 600,
+        "command_check_interval": 0.1,
+        "connection_timeout": 10,
+        "retry_delay": 2
+    }
+}

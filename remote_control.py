@@ -1,13 +1,11 @@
 #!/usr/bin/env python3
 """
 Universal Remote Control System - Single Python Script
-Works without installation, admin rights, or dependencies beyond Python standard library.
+Zero-installation remote control for university environments.
 
 Usage:
-    python remote_control.py server                    # Start server
+    python remote_control.py server [PORT]             # Start server
     python remote_control.py agent SERVER_URL          # Start agent
-    python remote_control.py controller SESSION_ID     # Start controller (CLI)
-    python remote_control.py web                       # Start web interface
 """
 
 import sys
@@ -28,15 +26,7 @@ from datetime import datetime, timedelta
 import queue
 import io
 
-# Try to import GUI dependencies (not available on headless cloud servers)
-try:
-    import tkinter as tk
-    from tkinter import messagebox
-    HAS_TKINTER = True
-except ImportError:
-    HAS_TKINTER = False
-
-# Try to import optional dependencies
+# Try to import optional dependencies with fallbacks
 try:
     import PIL.ImageGrab as ImageGrab
     HAS_PIL = True
@@ -44,20 +34,15 @@ except ImportError:
     HAS_PIL = False
 
 try:
-    # Dynamic import to avoid automatic dependency detection by cloud platforms
-    mouse = __import__('pynput.mouse', fromlist=[''])
-    keyboard = __import__('pynput.keyboard', fromlist=[''])
+    # Import pynput for mouse and keyboard control
+    import pynput.mouse as pynput_mouse
+    import pynput.keyboard as pynput_keyboard
+    mouse = pynput_mouse
+    keyboard = pynput_keyboard
     HAS_PYNPUT = True
 except ImportError:
     HAS_PYNPUT = False
 
-# Fallback Windows-specific imports
-try:
-    import ctypes
-    import ctypes.wintypes
-    HAS_WINDOWS_API = True
-except ImportError:
-    HAS_WINDOWS_API = False
 
 class RemoteControlServer:
     """HTTP-based server for remote control coordination"""
@@ -86,6 +71,10 @@ class RemoteControlServer:
         server_ref = self
         
         class RequestHandler(BaseHTTPRequestHandler):
+            def log_message(self, format, *args):
+                """Suppress default logging"""
+                pass
+                
             def do_GET(self):
                 """Handle GET requests"""
                 parsed = urlparse(self.path)
@@ -94,11 +83,6 @@ class RemoteControlServer:
                 
                 if path == '/':
                     self.serve_web_interface()
-                elif path == '/agent':
-                    self.serve_agent_interface()
-                elif path.startswith('/control/'):
-                    session_id = path.split('/')[-1]
-                    self.serve_controller_interface(session_id)
                 elif path == '/api/sessions':
                     self.api_get_sessions()
                 elif path.startswith('/api/commands/'):
@@ -115,453 +99,729 @@ class RemoteControlServer:
                 parsed = urlparse(self.path)
                 path = parsed.path
                 
-                content_length = int(self.headers.get('Content-Length', 0))
-                post_data = self.rfile.read(content_length)
-                
-                try:
-                    data = json.loads(post_data.decode('utf-8'))
-                except:
-                    data = {}
-                
                 if path == '/api/register':
-                    self.api_register_agent(data)
-                elif path.startswith('/api/command/'):
-                    session_id = path.split('/')[-1]
-                    self.api_send_command(session_id, data)
+                    self.api_register()
                 elif path == '/api/screen':
-                    self.api_receive_screen(data)
+                    self.api_post_screen()
+                elif path == '/api/command':
+                    self.api_post_command()
                 else:
                     self.send_error(404)
             
             def serve_web_interface(self):
-                """Serve main web interface"""
-                html = """<!DOCTYPE html>
-<html><head><title>Remote Control</title>
-<style>
-body{font-family:Arial,sans-serif;background:#1a1a1a;color:white;text-align:center;padding:2rem}
-.container{max-width:600px;margin:0 auto;background:#2d2d2d;padding:2rem;border-radius:10px}
-button{background:#007acc;color:white;border:none;padding:1rem 2rem;border-radius:5px;cursor:pointer;margin:0.5rem;font-size:1rem}
-button:hover{background:#005a9e}
-input{padding:0.75rem;margin:0.5rem;border:1px solid #555;border-radius:5px;background:#333;color:white;font-size:1rem;width:300px}
-.session-list{background:#333;padding:1rem;border-radius:5px;margin:1rem 0}
-.session-item{padding:0.5rem;border-bottom:1px solid #555;cursor:pointer}
-.session-item:hover{background:#444}
-</style></head><body>
-<div class="container">
-<h1>🖥️ Remote Control System</h1>
-<h3>Connect to Computer</h3>
-<input type="text" id="sessionId" placeholder="Enter Session ID">
-<br><button onclick="connect()">Connect</button>
-
-<h3>Active Sessions</h3>
-<button onclick="refreshSessions()">Refresh</button>
-<div class="session-list" id="sessions">Loading...</div>
-
-<h3>Start Agent</h3>
-<p>Run this command on the computer you want to control:</p>
-<code>python remote_control.py agent http://YOUR_SERVER:8080</code>
-</div>
-
-<script>
-function connect(){
-    const sid = document.getElementById('sessionId').value;
-    if(sid) window.open('/control/'+sid, '_blank');
-}
-
-function refreshSessions(){
-    fetch('/api/sessions').then(r=>r.json()).then(data=>{
-        const div = document.getElementById('sessions');
-        if(data.length === 0){
-            div.innerHTML = '<p>No active sessions</p>';
-        } else {
-            div.innerHTML = data.map(s => 
-                `<div class="session-item" onclick="document.getElementById('sessionId').value='${s.id}'">
-                Session ${s.id} - ${s.type} - ${new Date(s.timestamp).toLocaleTimeString()}
-                </div>`
-            ).join('');
-        }
-    });
-}
-
-setInterval(refreshSessions, 5000);
-refreshSessions();
-</script>
-</body></html>"""
-                
+                """Serve the web-based controller interface"""
+                html = self.get_web_interface_html()
                 self.send_response(200)
-                self.send_header('Content-Type', 'text/html')
-                self.end_headers()
-                self.wfile.write(html.encode())
-            
-            def serve_agent_interface(self):
-                """Serve agent setup interface"""
-                html = """<!DOCTYPE html>
-<html><head><title>Remote Agent Setup</title>
-<style>
-body{font-family:Arial,sans-serif;background:#1a1a1a;color:white;text-align:center;padding:2rem}
-.container{max-width:600px;margin:0 auto;background:#2d2d2d;padding:2rem;border-radius:10px}
-button{background:#007acc;color:white;border:none;padding:1rem 2rem;border-radius:5px;cursor:pointer;margin:0.5rem;font-size:1rem}
-.code{background:#000;padding:1rem;border-radius:5px;margin:1rem 0;font-family:monospace;color:#00ff00}
-</style></head><body>
-<div class="container">
-<h1>🤖 Remote Agent Setup</h1>
-<p>Download and run the Python script on the computer you want to control:</p>
-
-<h3>Method 1: Download Script</h3>
-<button onclick="downloadScript()">Download remote_control.py</button>
-
-<h3>Method 2: Command Line</h3>
-<div class="code">python remote_control.py agent """ + self.headers.get('Host', 'localhost:8080') + """</div>
-
-<h3>Method 3: Copy & Paste</h3>
-<p>Copy the entire script content and save as 'remote_control.py', then run the command above.</p>
-</div>
-
-<script>
-function downloadScript(){
-    window.open('/download/remote_control.py', '_blank');
-}
-</script>
-</body></html>"""
-                
-                self.send_response(200)
-                self.send_header('Content-Type', 'text/html')
-                self.end_headers()
-                self.wfile.write(html.encode())
-            
-            def serve_controller_interface(self, session_id):
-                """Serve controller interface"""
-                html = f"""<!DOCTYPE html>
-<html><head><title>Remote Control - {session_id}</title>
-<style>
-body{{margin:0;background:#000;color:white;font-family:Arial,sans-serif}}
-.header{{background:#333;padding:1rem;display:flex;justify-content:space-between;align-items:center}}
-.screen{{width:100vw;height:calc(100vh - 60px);position:relative;overflow:hidden}}
-#screenImg{{max-width:100%;max-height:100%;cursor:crosshair}}
-.status{{position:absolute;top:10px;left:50%;transform:translateX(-50%);background:rgba(0,0,0,0.8);padding:0.5rem 1rem;border-radius:20px}}
-button{{background:#007acc;color:white;border:none;padding:0.5rem 1rem;border-radius:4px;cursor:pointer}}
-</style></head><body>
-<div class="header">
-<div>Session: {session_id}</div>
-<div>
-<button onclick="sendSpecial('ctrl-alt-del')">Ctrl+Alt+Del</button>
-<button onclick="disconnect()">Disconnect</button>
-</div>
-</div>
-<div class="status" id="status">Connecting...</div>
-<div class="screen">
-<img id="screenImg" src="" alt="Remote Screen">
-</div>
-
-<script>
-let sessionId = '{session_id}';
-let connected = false;
-
-function updateScreen(){{
-    fetch('/api/screen/'+sessionId)
-    .then(r => r.json())
-    .then(data => {{
-        if(data.image){{
-            document.getElementById('screenImg').src = 'data:image/jpeg;base64,'+data.image;
-            document.getElementById('status').textContent = 'Connected';
-            connected = true;
-        }}
-    }})
-    .catch(e => {{
-        document.getElementById('status').textContent = 'Disconnected';
-        connected = false;
-    }});
-}}
-
-function sendCommand(cmd){{
-    fetch('/api/command/'+sessionId, {{
-        method: 'POST',
-        headers: {{'Content-Type': 'application/json'}},
-        body: JSON.stringify(cmd)
-    }});
-}}
-
-document.getElementById('screenImg').addEventListener('click', function(e){{
-    if(!connected) return;
-    const rect = this.getBoundingClientRect();
-    const x = (e.clientX - rect.left) / rect.width;
-    const y = (e.clientY - rect.top) / rect.height;
-    sendCommand({{
-        type: 'mouse',
-        action: 'click',
-        x: x,
-        y: y,
-        button: e.button === 2 ? 'right' : 'left'
-    }});
-}});
-
-document.addEventListener('keydown', function(e){{
-    if(!connected) return;
-    e.preventDefault();
-    sendCommand({{
-        type: 'keyboard',
-        action: 'press',
-        key: e.key,
-        code: e.code,
-        ctrl: e.ctrlKey,
-        alt: e.altKey,
-        shift: e.shiftKey
-    }});
-}});
-
-function sendSpecial(action){{
-    sendCommand({{type: 'special', action: action}});
-}}
-
-function disconnect(){{
-    window.close();
-}}
-
-// Update screen every 500ms
-setInterval(updateScreen, 500);
-updateScreen();
-</script>
-</body></html>"""
-                
-                self.send_response(200)
-                self.send_header('Content-Type', 'text/html')
+                self.send_header('Content-type', 'text/html')
                 self.end_headers()
                 self.wfile.write(html.encode())
             
             def api_get_sessions(self):
-                """API: Get active sessions"""
-                sessions = [
-                    {
-                        'id': sid,
-                        'type': session.get('type', 'unknown'),
-                        'timestamp': session.get('timestamp', 0)
-                    }
-                    for sid, session in server_ref.sessions.items()
-                ]
+                """API: Get list of active sessions"""
+                sessions_list = []
+                current_time = time.time()
                 
-                self.send_response(200)
-                self.send_header('Content-Type', 'application/json')
-                self.end_headers()
-                self.wfile.write(json.dumps(sessions).encode())
-            
-            def api_register_agent(self, data):
-                """API: Register new agent"""
-                session_id = secrets.token_hex(3).upper()
-                server_ref.sessions[session_id] = {
-                    'type': 'agent',
-                    'timestamp': time.time() * 1000,
-                    'info': data
-                }
-                server_ref.command_queues[session_id] = queue.Queue()
+                # Clean up old sessions (older than 30 minutes)
+                expired_sessions = []
+                for session_id, session_data in server_ref.sessions.items():
+                    if current_time - session_data.get('last_seen', 0) > 1800:  # 30 minutes
+                        expired_sessions.append(session_id)
                 
-                print(f"🤖 Agent registered: {session_id}")
+                for session_id in expired_sessions:
+                    if session_id in server_ref.sessions:
+                        del server_ref.sessions[session_id]
+                    if session_id in server_ref.command_queues:
+                        del server_ref.command_queues[session_id]
+                    if session_id in server_ref.screen_data:
+                        del server_ref.screen_data[session_id]
                 
-                self.send_response(200)
-                self.send_header('Content-Type', 'application/json')
-                self.end_headers()
-                self.wfile.write(json.dumps({'sessionId': session_id}).encode())
+                # Return active sessions
+                for session_id, session_data in server_ref.sessions.items():
+                    sessions_list.append({
+                        'sessionId': session_id,
+                        'platform': session_data.get('platform', 'unknown'),
+                        'lastSeen': session_data.get('last_seen', 0),
+                        'hasScreen': session_id in server_ref.screen_data
+                    })
+                
+                self.send_json_response(sessions_list)
             
             def api_get_commands(self, session_id):
-                """API: Get commands for agent"""
-                commands = []
-                if session_id in server_ref.command_queues:
-                    q = server_ref.command_queues[session_id]
-                    while not q.empty():
-                        try:
-                            commands.append(q.get_nowait())
-                        except queue.Empty:
-                            break
+                """API: Get pending commands for a session"""
+                if session_id not in server_ref.command_queues:
+                    server_ref.command_queues[session_id] = []
                 
-                self.send_response(200)
-                self.send_header('Content-Type', 'application/json')
-                self.end_headers()
-                self.wfile.write(json.dumps(commands).encode())
-            
-            def api_send_command(self, session_id, command):
-                """API: Send command to agent"""
-                if session_id in server_ref.command_queues:
-                    server_ref.command_queues[session_id].put(command)
+                commands = server_ref.command_queues[session_id].copy()
+                server_ref.command_queues[session_id].clear()  # Clear after reading
                 
-                self.send_response(200)
-                self.send_header('Content-Type', 'application/json')
-                self.end_headers()
-                self.wfile.write(json.dumps({'success': True}).encode())
-            
-            def api_receive_screen(self, data):
-                """API: Receive screen data from agent"""
-                session_id = data.get('sessionId')
-                if session_id:
-                    server_ref.screen_data[session_id] = {
-                        'image': data.get('data'),
-                        'timestamp': time.time()
-                    }
-                
-                self.send_response(200)
-                self.send_header('Content-Type', 'application/json')
-                self.end_headers()
-                self.wfile.write(json.dumps({'success': True}).encode())
+                self.send_json_response(commands)
             
             def api_get_screen(self, session_id):
-                """API: Get screen data for controller"""
-                screen = server_ref.screen_data.get(session_id, {})
-                
-                self.send_response(200)
-                self.send_header('Content-Type', 'application/json')
-                self.end_headers()
-                self.wfile.write(json.dumps(screen).encode())
+                """API: Get latest screen data for a session"""
+                if session_id in server_ref.screen_data:
+                    screen_info = server_ref.screen_data[session_id]
+                    self.send_json_response(screen_info)
+                else:
+                    self.send_json_response({'error': 'No screen data available'})
             
-            def log_message(self, format, *args):
-                """Suppress default logging"""
-                pass
+            def api_register(self):
+                """API: Register a new agent session"""
+                try:
+                    content_length = int(self.headers['Content-Length'])
+                    post_data = self.rfile.read(content_length).decode()
+                    data = json.loads(post_data)
+                    
+                    # Generate session ID
+                    session_id = secrets.token_hex(4).upper()
+                    
+                    # Store session info
+                    server_ref.sessions[session_id] = {
+                        'platform': data.get('platform', 'unknown'),
+                        'agent_type': data.get('agent_type', 'basic'),
+                        'registered_at': time.time(),
+                        'last_seen': time.time()
+                    }
+                    
+                    # Initialize command queue
+                    server_ref.command_queues[session_id] = []
+                    
+                    response = {'sessionId': session_id, 'status': 'registered'}
+                    self.send_json_response(response)
+                    
+                    print(f"🤖 Agent registered: {session_id} ({data.get('platform', 'unknown')})")
+                    
+                except Exception as e:
+                    self.send_json_response({'error': str(e)}, status=400)
+            
+            def api_post_screen(self):
+                """API: Receive screen data from agent"""
+                try:
+                    content_length = int(self.headers['Content-Length'])
+                    post_data = self.rfile.read(content_length).decode()
+                    data = json.loads(post_data)
+                    
+                    session_id = data.get('sessionId')
+                    if not session_id:
+                        self.send_json_response({'error': 'Missing sessionId'}, status=400)
+                        return
+                    
+                    # Update last seen time
+                    if session_id in server_ref.sessions:
+                        server_ref.sessions[session_id]['last_seen'] = time.time()
+                    
+                    # Store screen data
+                    server_ref.screen_data[session_id] = {
+                        'data': data.get('data'),
+                        'timestamp': data.get('timestamp', time.time() * 1000),
+                        'received_at': time.time() * 1000
+                    }
+                    
+                    self.send_json_response({'status': 'received'})
+                    
+                except Exception as e:
+                    self.send_json_response({'error': str(e)}, status=400)
+            
+            def api_post_command(self):
+                """API: Send command to agent"""
+                try:
+                    content_length = int(self.headers['Content-Length'])
+                    post_data = self.rfile.read(content_length).decode()
+                    data = json.loads(post_data)
+                    
+                    session_id = data.get('sessionId')
+                    if not session_id or session_id not in server_ref.sessions:
+                        self.send_json_response({'error': 'Invalid session'}, status=400)
+                        return
+                    
+                    # Add command to queue
+                    if session_id not in server_ref.command_queues:
+                        server_ref.command_queues[session_id] = []
+                    
+                    command = {
+                        'type': data.get('type'),
+                        'action': data.get('action'),
+                        'x': data.get('x'),
+                        'y': data.get('y'),
+                        'button': data.get('button'),
+                        'key': data.get('key'),
+                        'deltaY': data.get('deltaY'),
+                        'timestamp': time.time() * 1000
+                    }
+                    
+                    server_ref.command_queues[session_id].append(command)
+                    
+                    self.send_json_response({'status': 'queued'})
+                    
+                except Exception as e:
+                    self.send_json_response({'error': str(e)}, status=400)
+            
+            def send_json_response(self, data, status=200):
+                """Send JSON response"""
+                self.send_response(status)
+                self.send_header('Content-Type', 'application/json')
+                self.send_header('Access-Control-Allow-Origin', '*')
+                self.send_header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
+                self.send_header('Access-Control-Allow-Headers', 'Content-Type')
+                self.end_headers()
+                self.wfile.write(json.dumps(data).encode())
+            
+            def get_web_interface_html(self):
+                """Generate the web interface HTML"""
+                return '''<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>University Remote Control</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            color: white;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 15px;
+            padding: 30px;
+            backdrop-filter: blur(10px);
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1);
+        }
+        .header {
+            text-align: center;
+            margin-bottom: 30px;
+        }
+        .header h1 {
+            margin: 0;
+            font-size: 2.5em;
+            text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.3);
+        }
+        .status {
+            padding: 15px;
+            margin: 20px 0;
+            border-radius: 8px;
+            text-align: center;
+        }
+        .status.connected {
+            background: rgba(46, 204, 113, 0.2);
+            border: 1px solid #2ecc71;
+        }
+        .status.disconnected {
+            background: rgba(231, 76, 60, 0.2);
+            border: 1px solid #e74c3c;
+        }
+        .controls {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+            margin: 20px 0;
+        }
+        .control-panel {
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 10px;
+            padding: 20px;
+        }
+        .control-panel h3 {
+            margin-top: 0;
+            color: #fff;
+        }
+        input, button, select {
+            width: 100%;
+            padding: 12px;
+            margin: 10px 0;
+            border: none;
+            border-radius: 6px;
+            font-size: 16px;
+        }
+        input {
+            background: rgba(255, 255, 255, 0.9);
+            color: #333;
+        }
+        button {
+            background: #3498db;
+            color: white;
+            cursor: pointer;
+            font-weight: bold;
+            transition: background 0.3s;
+        }
+        button:hover {
+            background: #2980b9;
+        }
+        button:disabled {
+            background: #7f8c8d;
+            cursor: not-allowed;
+        }
+        .screen-container {
+            margin: 20px 0;
+            text-align: center;
+            background: rgba(0, 0, 0, 0.3);
+            border-radius: 10px;
+            padding: 20px;
+        }
+        #screen {
+            max-width: 100%;
+            height: auto;
+            border-radius: 8px;
+            box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
+            cursor: crosshair;
+        }
+        .sessions-list {
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 10px;
+            padding: 20px;
+            margin: 20px 0;
+        }
+        .session-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 10px;
+            margin: 5px 0;
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 6px;
+            cursor: pointer;
+            transition: background 0.3s;
+        }
+        .session-item:hover {
+            background: rgba(255, 255, 255, 0.2);
+        }
+        .session-item.active {
+            background: rgba(52, 152, 219, 0.3);
+        }
+        @media (max-width: 768px) {
+            .controls {
+                grid-template-columns: 1fr;
+            }
+            .header h1 {
+                font-size: 2em;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🎓 University Remote Control</h1>
+            <p>Connect to university computers from anywhere</p>
+        </div>
+
+        <div id="status" class="status disconnected">
+            <strong>⚠️ Disconnected</strong> - Enter a Session ID to connect
+        </div>
+
+        <div class="controls">
+            <div class="control-panel">
+                <h3>🔗 Connection</h3>
+                <input type="text" id="sessionId" placeholder="Enter Session ID (e.g., A1B2C3)" maxlength="8">
+                <button onclick="connectToSession()">Connect to Computer</button>
+                <button onclick="disconnectSession()" id="disconnectBtn" disabled>Disconnect</button>
+            </div>
+
+            <div class="control-panel">
+                <h3>📋 Available Sessions</h3>
+                <div id="sessionsList">Loading sessions...</div>
+                <button onclick="refreshSessions()">Refresh Sessions</button>
+            </div>
+        </div>
+
+        <div class="screen-container">
+            <h3>🖥️ Remote Screen</h3>
+            <img id="screen" src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==" alt="Remote screen will appear here">
+            <p id="screenStatus">Not connected</p>
+        </div>
+    </div>
+
+    <script>
+        let currentSessionId = null;
+        let screenUpdateInterval = null;
+        let sessionsUpdateInterval = null;
+
+        function updateStatus(message, isConnected) {
+            const statusEl = document.getElementById('status');
+            statusEl.innerHTML = message;
+            statusEl.className = 'status ' + (isConnected ? 'connected' : 'disconnected');
+            document.getElementById('disconnectBtn').disabled = !isConnected;
+        }
+
+        function connectToSession() {
+            const sessionId = document.getElementById('sessionId').value.trim().toUpperCase();
+            if (!sessionId) {
+                alert('Please enter a Session ID');
+                return;
+            }
+
+            currentSessionId = sessionId;
+            updateStatus(`🔄 Connecting to ${sessionId}...`, false);
+
+            // Start screen updates
+            startScreenUpdates();
+            updateStatus(`✅ Connected to ${sessionId}`, true);
+            
+            // Add mouse and keyboard event listeners
+            addControlListeners();
+        }
+
+        function disconnectSession() {
+            currentSessionId = null;
+            stopScreenUpdates();
+            removeControlListeners();
+            updateStatus('⚠️ Disconnected', false);
+            document.getElementById('screenStatus').textContent = 'Not connected';
+        }
+
+        function startScreenUpdates() {
+            if (screenUpdateInterval) clearInterval(screenUpdateInterval);
+            
+            screenUpdateInterval = setInterval(() => {
+                if (!currentSessionId) return;
+                
+                fetch(`/api/screen/${currentSessionId}`)
+                    .then(response => response.json())
+                    .then(data => {
+                        if (data.data) {
+                            document.getElementById('screen').src = 'data:image/jpeg;base64,' + data.data;
+                            document.getElementById('screenStatus').textContent = 
+                                'Last update: ' + new Date(data.timestamp).toLocaleTimeString();
+                        }
+                    })
+                    .catch(error => {
+                        console.error('Screen update error:', error);
+                        document.getElementById('screenStatus').textContent = 'Screen update failed';
+                    });
+            }, 1000);
+        }
+
+        function stopScreenUpdates() {
+            if (screenUpdateInterval) {
+                clearInterval(screenUpdateInterval);
+                screenUpdateInterval = null;
+            }
+        }
+
+        function addControlListeners() {
+            const screen = document.getElementById('screen');
+            
+            screen.addEventListener('click', handleMouseClick);
+            screen.addEventListener('mousemove', handleMouseMove);
+            screen.addEventListener('wheel', handleMouseWheel);
+            document.addEventListener('keydown', handleKeyDown);
+            document.addEventListener('keyup', handleKeyUp);
+        }
+
+        function removeControlListeners() {
+            const screen = document.getElementById('screen');
+            
+            screen.removeEventListener('click', handleMouseClick);
+            screen.removeEventListener('mousemove', handleMouseMove);
+            screen.removeEventListener('wheel', handleMouseWheel);
+            document.removeEventListener('keydown', handleKeyDown);
+            document.removeEventListener('keyup', handleKeyUp);
+        }
+
+        function handleMouseClick(event) {
+            if (!currentSessionId) return;
+            
+            const rect = event.target.getBoundingClientRect();
+            const x = (event.clientX - rect.left) / rect.width;
+            const y = (event.clientY - rect.top) / rect.height;
+            
+            sendCommand({
+                type: 'mouse',
+                action: 'click',
+                x: x,
+                y: y,
+                button: event.button === 2 ? 'right' : 'left'
+            });
+        }
+
+        function handleMouseMove(event) {
+            if (!currentSessionId) return;
+            
+            const rect = event.target.getBoundingClientRect();
+            const x = (event.clientX - rect.left) / rect.width;
+            const y = (event.clientY - rect.top) / rect.height;
+            
+            sendCommand({
+                type: 'mouse',
+                action: 'move',
+                x: x,
+                y: y
+            });
+        }
+
+        function handleMouseWheel(event) {
+            if (!currentSessionId) return;
+            
+            event.preventDefault();
+            sendCommand({
+                type: 'mouse',
+                action: 'scroll',
+                deltaY: event.deltaY
+            });
+        }
+
+        function handleKeyDown(event) {
+            if (!currentSessionId) return;
+            if (event.target.tagName === 'INPUT') return;
+            
+            event.preventDefault();
+            sendCommand({
+                type: 'keyboard',
+                action: 'keydown',
+                key: event.key
+            });
+        }
+
+        function handleKeyUp(event) {
+            if (!currentSessionId) return;
+            if (event.target.tagName === 'INPUT') return;
+            
+            event.preventDefault();
+            sendCommand({
+                type: 'keyboard',
+                action: 'keyup',
+                key: event.key
+            });
+        }
+
+        function sendCommand(command) {
+            if (!currentSessionId) return;
+            
+            fetch('/api/command', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    sessionId: currentSessionId,
+                    ...command
+                })
+            }).catch(error => {
+                console.error('Command send error:', error);
+            });
+        }
+
+        function refreshSessions() {
+            fetch('/api/sessions')
+                .then(response => response.json())
+                .then(sessions => {
+                    const sessionsList = document.getElementById('sessionsList');
+                    
+                    if (sessions.length === 0) {
+                        sessionsList.innerHTML = '<p>No active sessions</p>';
+                        return;
+                    }
+                    
+                    sessionsList.innerHTML = sessions.map(session => `
+                        <div class="session-item ${session.sessionId === currentSessionId ? 'active' : ''}" 
+                             onclick="document.getElementById('sessionId').value='${session.sessionId}'">
+                            <div>
+                                <strong>${session.sessionId}</strong><br>
+                                <small>${session.platform} - ${session.hasScreen ? '📺' : '📱'}</small>
+                            </div>
+                            <div>
+                                <small>${new Date(session.lastSeen * 1000).toLocaleTimeString()}</small>
+                            </div>
+                        </div>
+                    `).join('');
+                })
+                .catch(error => {
+                    console.error('Sessions refresh error:', error);
+                    document.getElementById('sessionsList').innerHTML = '<p>Failed to load sessions</p>';
+                });
+        }
+
+        // Auto-refresh sessions every 10 seconds
+        setInterval(refreshSessions, 10000);
+        
+        // Initial load
+        refreshSessions();
+
+        // Handle right-click context menu prevention on screen
+        document.getElementById('screen').addEventListener('contextmenu', function(e) {
+            e.preventDefault();
+            return false;
+        });
+    </script>
+</body>
+</html>'''
         
         return RequestHandler
 
+
 class RemoteControlAgent:
-    """Agent that captures screen and executes commands"""
+    """Remote Control Agent for University Computers"""
     
     def __init__(self, server_url):
         self.server_url = server_url.rstrip('/')
         self.session_id = None
         self.running = False
-        
+        self.settings = {
+            'screen_fps': 1,
+            'screen_quality': 50,
+            'screen_width': 800,
+            'screen_height': 600,
+            'command_check_interval': 0.1,
+            'connection_timeout': 10,
+            'retry_delay': 2
+        }
+        self.last_screen_time = 0
+
     def start(self):
-        """Start the agent"""
-        print("🤖 Starting Remote Control Agent...")
+        """Start the remote control agent"""
+        print("🤖 University Remote Control Agent Starting...")
         print(f"📡 Server: {self.server_url}")
+        print(f"🔧 PIL Available: {HAS_PIL}")
+        print(f"🔧 Input Control: {HAS_PYNPUT}")
         
-        # Register with server
         if not self.register():
             print("❌ Failed to register with server")
             return
         
-        print(f"✅ Agent registered! Session ID: {self.session_id}")
-        print("📋 Share this Session ID with your controller")
+        print()
+        print("=" * 60)
+        print(f"✅ Agent Active! Session ID: {self.session_id}")
+        print("📋 COPY THIS SESSION ID TO YOUR CONTROLLER!")
+        print(f"🌐 Controller URL: {self.server_url}")
+        print("=" * 60)
+        print()
         print("🔄 Agent is running... Press Ctrl+C to stop")
         
         self.running = True
         
-        # Start threads
-        screen_thread = threading.Thread(target=self.screen_capture_loop)
-        command_thread = threading.Thread(target=self.command_loop)
+        # Start background threads for screen capture and command processing
+        if HAS_PIL:
+            screen_thread = threading.Thread(target=self.screen_capture_loop, daemon=True)
+            screen_thread.start()
         
-        screen_thread.daemon = True
-        command_thread.daemon = True
-        
-        screen_thread.start()
-        command_thread.start()
+        if HAS_PYNPUT:
+            command_thread = threading.Thread(target=self.command_loop, daemon=True)
+            command_thread.start()
         
         try:
             while self.running:
                 time.sleep(1)
         except KeyboardInterrupt:
-            print("\n🛑 Agent stopped")
+            print("\n🛑 Agent stopped by user")
             self.running = False
-    
+
     def register(self):
-        """Register agent with server"""
+        """Register agent with server and get session ID"""
         data = {
             'platform': sys.platform,
-            'python_version': sys.version,
+            'python_version': sys.version.split()[0],
             'has_pil': HAS_PIL,
             'has_pynput': HAS_PYNPUT,
-            'has_windows_api': HAS_WINDOWS_API
+            'timestamp': datetime.now().isoformat(),
+            'agent_type': 'university'
         }
         
         try:
+            print("📝 Registering with server...")
             response = self.http_post('/api/register', data)
-            if response:
-                self.session_id = response.get('sessionId')
+            if response and 'sessionId' in response:
+                self.session_id = response['sessionId']
+                print("✅ Server registration successful")
                 return True
         except Exception as e:
-            print(f"Registration error: {e}")
+            print(f"⚠️ Server registration failed: {e}")
         
-        return False
-    
+        # Fallback - generate local session ID
+        try:
+            self.session_id = secrets.token_hex(4).upper()
+            print("⚠️ Using local session ID (server unavailable)")
+            return True
+        except:
+            import random
+            self.session_id = f"{random.randint(1000, 9999):04d}"
+            print("⚠️ Using random session ID (crypto unavailable)")
+            return True
+
     def screen_capture_loop(self):
-        """Continuously capture and send screen"""
+        """Continuously capture and send screen updates"""
+        fps_delay = 1.0 / self.settings.get('screen_fps', 1)
+        
         while self.running:
             try:
-                screen_data = self.capture_screen()
-                if screen_data:
-                    self.send_screen(screen_data)
-                time.sleep(1)  # 1 FPS
+                current_time = time.time()
+                if current_time - self.last_screen_time >= fps_delay:
+                    screen_data = self.capture_screen()
+                    if screen_data:
+                        self.send_screen(screen_data)
+                    self.last_screen_time = current_time
+                time.sleep(0.1)
             except Exception as e:
                 print(f"Screen capture error: {e}")
-                time.sleep(2)
-    
+                time.sleep(self.settings.get('retry_delay', 2))
+
     def command_loop(self):
-        """Continuously check for and execute commands"""
+        """Continuously check for and execute remote commands"""
+        check_interval = self.settings.get('command_check_interval', 0.1)
+        
         while self.running:
             try:
                 commands = self.get_commands()
                 for command in commands:
                     self.execute_command(command)
-                time.sleep(0.1)  # Check every 100ms
+                time.sleep(check_interval)
             except Exception as e:
                 print(f"Command loop error: {e}")
-                time.sleep(1)
-    
+                time.sleep(self.settings.get('retry_delay', 2))
+
     def capture_screen(self):
-        """Capture screen using available method"""
-        if HAS_PIL:
-            return self.capture_screen_pil()
-        elif HAS_WINDOWS_API:
-            return self.capture_screen_windows()
-        else:
-            return self.capture_screen_fallback()
-    
-    def capture_screen_pil(self):
         """Capture screen using PIL"""
+        if not HAS_PIL:
+            return None
+            
         try:
             screenshot = ImageGrab.grab()
-            # Resize for performance
-            screenshot = screenshot.resize((800, 600))
             
+            # Resize for performance
+            width = self.settings.get('screen_width', 800)
+            height = self.settings.get('screen_height', 600)
+            screenshot = screenshot.resize((width, height))
+            
+            # Convert to JPEG
             buffer = io.BytesIO()
-            screenshot.save(buffer, format='JPEG', quality=50)
+            quality = self.settings.get('screen_quality', 50)
+            screenshot.save(buffer, format='JPEG', quality=quality)
+            
             return base64.b64encode(buffer.getvalue()).decode()
         except Exception as e:
-            print(f"PIL capture error: {e}")
+            print(f"Screen capture error: {e}")
             return None
-    
-    def capture_screen_windows(self):
-        """Capture screen using Windows API"""
-        try:
-            # This is a simplified version - would need full Windows API implementation
-            print("Windows API screen capture not implemented in this example")
-            return None
-        except Exception as e:
-            print(f"Windows API capture error: {e}")
-            return None
-    
-    def capture_screen_fallback(self):
-        """Fallback screen capture method"""
-        print("⚠️  No screen capture method available")
-        return None
-    
+
     def send_screen(self, screen_data):
         """Send screen data to server"""
         data = {
             'sessionId': self.session_id,
             'data': screen_data,
-            'timestamp': time.time() * 1000
+            'timestamp': int(time.time() * 1000)
         }
         
         try:
             self.http_post('/api/screen', data)
         except Exception as e:
-            print(f"Screen send error: {e}")
-    
+            # Don't spam console with screen upload errors
+            pass
+
     def get_commands(self):
-        """Get commands from server"""
+        """Get pending commands from server"""
         try:
             response = self.http_get(f'/api/commands/{self.session_id}')
             return response if response else []
         except:
             return []
-    
+
     def execute_command(self, command):
         """Execute a remote command"""
+        if not HAS_PYNPUT:
+            return
+            
         try:
             cmd_type = command.get('type')
             
@@ -573,47 +833,30 @@ class RemoteControlAgent:
                 self.handle_special_command(command)
         except Exception as e:
             print(f"Command execution error: {e}")
-    
+
     def handle_mouse_command(self, command):
-        """Handle mouse commands"""
-        if HAS_PYNPUT:
-            self.handle_mouse_pynput(command)
-        elif HAS_WINDOWS_API:
-            self.handle_mouse_windows(command)
-        else:
-            print(f"Mouse command not supported: {command}")
-    
-    def handle_mouse_pynput(self, command):
-        """Handle mouse using pynput"""
+        """Handle mouse commands using pynput"""
         try:
-            x = int(command.get('x', 0) * 1920)  # Assume 1920x1080
+            x = int(command.get('x', 0) * 1920)  # Scale to screen
             y = int(command.get('y', 0) * 1080)
             
             mouse_controller = mouse.Controller()
             
-            if command.get('action') == 'click':
+            action = command.get('action')
+            if action == 'move':
+                mouse_controller.position = (x, y)
+            elif action == 'click':
                 mouse_controller.position = (x, y)
                 button = mouse.Button.right if command.get('button') == 'right' else mouse.Button.left
                 mouse_controller.click(button)
+            elif action == 'scroll':
+                dy = command.get('deltaY', 0)
+                mouse_controller.scroll(0, -dy // 120)  # Convert to scroll units
         except Exception as e:
-            print(f"Mouse pynput error: {e}")
-    
-    def handle_mouse_windows(self, command):
-        """Handle mouse using Windows API"""
-        # Simplified - would need full Windows API implementation
-        print(f"Windows mouse command: {command}")
-    
+            print(f"Mouse command error: {e}")
+
     def handle_keyboard_command(self, command):
-        """Handle keyboard commands"""
-        if HAS_PYNPUT:
-            self.handle_keyboard_pynput(command)
-        elif HAS_WINDOWS_API:
-            self.handle_keyboard_windows(command)
-        else:
-            print(f"Keyboard command not supported: {command}")
-    
-    def handle_keyboard_pynput(self, command):
-        """Handle keyboard using pynput"""
+        """Handle keyboard commands using pynput"""
         try:
             key_controller = keyboard.Controller()
             key = command.get('key', '')
@@ -635,35 +878,47 @@ class RemoteControlAgent:
                 'PageDown': keyboard.Key.page_down,
             }
             
-            if key in key_map:
-                key_controller.press(key_map[key])
-                key_controller.release(key_map[key])
-            else:
+            if command.get('action') == 'keydown':
+                if key in key_map:
+                    key_controller.press(key_map[key])
+                elif len(key) == 1:
+                    key_controller.press(key)
+            elif command.get('action') == 'keyup':
+                if key in key_map:
+                    key_controller.release(key_map[key])
+                elif len(key) == 1:
+                    key_controller.release(key)
+            elif command.get('action') == 'type':
                 key_controller.type(key)
         except Exception as e:
-            print(f"Keyboard pynput error: {e}")
-    
-    def handle_keyboard_windows(self, command):
-        """Handle keyboard using Windows API"""
-        # Simplified - would need full Windows API implementation
-        print(f"Windows keyboard command: {command}")
-    
+            print(f"Keyboard command error: {e}")
+
     def handle_special_command(self, command):
-        """Handle special commands"""
+        """Handle special system commands"""
         action = command.get('action')
         if action == 'ctrl-alt-del':
-            print("Ctrl+Alt+Del requested (not implemented for security)")
+            print("⚠️ Ctrl+Alt+Del requested (not implemented for security)")
+        elif action == 'alt-tab':
+            try:
+                key_controller = keyboard.Controller()
+                key_controller.press(keyboard.Key.alt)
+                key_controller.press(keyboard.Key.tab)
+                key_controller.release(keyboard.Key.tab)
+                key_controller.release(keyboard.Key.alt)
+            except:
+                pass
         else:
             print(f"Special command: {action}")
-    
+
     def http_get(self, path):
         """Make HTTP GET request"""
         try:
-            with urllib.request.urlopen(f"{self.server_url}{path}") as response:
+            timeout = self.settings.get('connection_timeout', 10)
+            with urllib.request.urlopen(f"{self.server_url}{path}", timeout=timeout) as response:
                 return json.loads(response.read().decode())
         except Exception as e:
             raise Exception(f"GET {path} failed: {e}")
-    
+
     def http_post(self, path, data):
         """Make HTTP POST request"""
         try:
@@ -673,97 +928,49 @@ class RemoteControlAgent:
                 data=json_data,
                 headers={'Content-Type': 'application/json'}
             )
-            with urllib.request.urlopen(req) as response:
+            timeout = self.settings.get('connection_timeout', 10)
+            with urllib.request.urlopen(req, timeout=timeout) as response:
                 return json.loads(response.read().decode())
         except Exception as e:
             raise Exception(f"POST {path} failed: {e}")
 
-def print_usage():
-    """Print usage information"""
-    print("""
-🖥️  Universal Remote Control System
-
-Usage:
-    python remote_control.py server [port]              # Start server (default port 8080)
-    python remote_control.py agent <server_url>         # Start agent
-    python remote_control.py web                        # Start web interface only
-    python remote_control.py install-deps               # Install optional dependencies
-
-Examples:
-    python remote_control.py server                     # Start server on port 8080
-    python remote_control.py server 9000                # Start server on port 9000
-    python remote_control.py agent http://localhost:8080    # Connect agent to local server
-    python remote_control.py agent https://my-server.com    # Connect agent to remote server
-
-Dependencies (optional, improves functionality):
-    pip install pillow pynput
-
-Without dependencies:
-    - Screen capture: Limited/not available
-    - Mouse/Keyboard: Limited platform support
-    - Still works for basic remote control via web interface
-""")
-
-def install_dependencies():
-    """Install optional dependencies"""
-    print("Installing optional dependencies...")
-    try:
-        import subprocess
-        subprocess.check_call([sys.executable, '-m', 'pip', 'install', 'pillow', 'pynput'])
-        print("✅ Dependencies installed successfully!")
-    except Exception as e:
-        print(f"❌ Failed to install dependencies: {e}")
-        print("You can manually install with: pip install pillow pynput")
 
 def main():
     """Main entry point"""
     if len(sys.argv) < 2:
-        print_usage()
-        return
+        print("University Remote Control System")
+        print("Usage:")
+        print("  python remote_control.py server [PORT]     # Start server")
+        print("  python remote_control.py agent SERVER_URL  # Start agent")
+        sys.exit(1)
     
-    command = sys.argv[1].lower()
+    mode = sys.argv[1].lower()
     
-    if command == 'server':
-        # Handle Railway's PORT environment variable
+    if mode == 'server':
+        # Start server mode
+        port = int(os.environ.get('PORT', 8080))  # Railway sets PORT environment variable
         if len(sys.argv) > 2:
             port = int(sys.argv[2])
-        else:
-            port = int(os.environ.get('PORT', 8080))
         
         server = RemoteControlServer(port)
         server.start()
-    
-    elif command == 'agent':
+        
+    elif mode == 'agent':
+        # Start agent mode
         if len(sys.argv) < 3:
-            print("❌ Server URL required for agent mode")
-            print("Usage: python remote_control.py agent <server_url>")
-            return
+            print("Error: Agent mode requires server URL")
+            print("Usage: python remote_control.py agent SERVER_URL")
+            sys.exit(1)
         
         server_url = sys.argv[2]
         agent = RemoteControlAgent(server_url)
         agent.start()
-    
-    elif command == 'web':
-        # Just start server and open browser
-        port = 8080
-        print(f"🌐 Starting web interface on http://localhost:{port}")
-        server = RemoteControlServer(port)
         
-        # Try to open browser
-        try:
-            import webbrowser
-            webbrowser.open(f'http://localhost:{port}')
-        except:
-            pass
-        
-        server.start()
-    
-    elif command == 'install-deps':
-        install_dependencies()
-    
     else:
-        print(f"❌ Unknown command: {command}")
-        print_usage()
+        print(f"Unknown mode: {mode}")
+        print("Available modes: server, agent")
+        sys.exit(1)
+
 
 if __name__ == "__main__":
     main()
