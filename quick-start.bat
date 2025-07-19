@@ -20,23 +20,39 @@ if not exist "agent.py" (
     exit /b 1
 )
 
-REM Check Python
+REM Try different Python commands to find the best one
 python --version >nul 2>&1
-if errorlevel 1 (
-    echo ❌ Python not found
-    echo.
-    echo Install Python from: https://python.org/downloads
-    echo Or use: university-setup.bat for full setup instructions
-    echo.
-    pause
-    exit /b 1
+if not errorlevel 1 (
+    set PYTHON_CMD=python
+    goto :python_found
 )
 
-echo ✅ Python found - Starting agent...
+python3 --version >nul 2>&1
+if not errorlevel 1 (
+    set PYTHON_CMD=python3
+    goto :python_found
+)
+
+py --version >nul 2>&1
+if not errorlevel 1 (
+    set PYTHON_CMD=py
+    goto :python_found
+)
+
+echo ❌ Python not found
+echo.
+echo Install Python from: https://python.org/downloads
+echo Or use: university-setup.bat for full setup instructions
+echo.
+pause
+exit /b 1
+
+:python_found
+echo ✅ Python found (%PYTHON_CMD%) - Starting agent...
 echo.
 
 REM Start the agent directly
-python agent.py
+%PYTHON_CMD% agent.py
 
 echo.
 echo 🛑 Agent stopped

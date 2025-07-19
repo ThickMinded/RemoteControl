@@ -73,23 +73,25 @@ class RemoteControlAgent:
 
     def start(self):
         """Start the remote control agent"""
-        print("🤖 University Remote Control Agent Starting...")
-        print(f"📡 Server: {self.server_url}")
-        print(f"🔧 PIL Available: {HAS_PIL}")
-        print(f"🔧 Input Control: {HAS_PYNPUT}")
+        print("University Remote Control Agent Starting...")
+        print(f"Server: {self.server_url}")
+        print(f"PIL Available: {HAS_PIL}")
+        print(f"Input Control: {HAS_PYNPUT}")
         
         if not self.register():
-            print("❌ Failed to register with server")
+            print("FAILED to register with server")
             return
         
         print()
         print("=" * 60)
-        print(f"✅ Agent Active! Session ID: {self.session_id}")
-        print("📋 COPY THIS SESSION ID TO YOUR CONTROLLER!")
-        print(f"🌐 Controller URL: {self.server_url}")
+        print(f"SUCCESS! Agent Active! Session ID: {self.session_id}")
+        print("=" * 60)
+        print("COPY THIS SESSION ID TO YOUR CONTROLLER!")
+        print(f"Session ID: {self.session_id}")
+        print(f"Controller URL: {self.server_url}")
         print("=" * 60)
         print()
-        print("🔄 Agent is running... Press Ctrl+C to stop")
+        print("Agent is running... Press Ctrl+C to stop")
         
         self.running = True
         
@@ -169,7 +171,10 @@ class RemoteControlAgent:
         while self.running:
             try:
                 commands = self.get_commands()
+                if commands:
+                    print(f"Received {len(commands)} commands")
                 for command in commands:
+                    print(f"Executing command: {command}")
                     self.execute_command(command)
                 time.sleep(check_interval)
             except Exception as e:
@@ -241,6 +246,7 @@ class RemoteControlAgent:
     def handle_mouse_command(self, command):
         """Handle mouse commands using pynput"""
         try:
+            print(f"Handling mouse command: {command}")
             x = int(command.get('x', 0) * 1920)  # Scale to screen
             y = int(command.get('y', 0) * 1080)
             
@@ -249,13 +255,16 @@ class RemoteControlAgent:
             action = command.get('action')
             if action == 'move':
                 mouse_controller.position = (x, y)
+                print(f"Mouse moved to ({x}, {y})")
             elif action == 'click':
                 mouse_controller.position = (x, y)
                 button = mouse.Button.right if command.get('button') == 'right' else mouse.Button.left
                 mouse_controller.click(button)
+                print(f"Mouse clicked at ({x}, {y}) with {button}")
             elif action == 'scroll':
                 dy = command.get('deltaY', 0)
                 mouse_controller.scroll(0, -dy // 120)  # Convert to scroll units
+                print(f"Mouse scrolled: {dy}")
         except Exception as e:
             print(f"Mouse command error: {e}")
 

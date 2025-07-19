@@ -525,17 +525,24 @@ class RemoteControlServer:
         function handleMouseClick(event) {
             if (!currentSessionId) return;
             
+            console.log('Mouse click detected!', event);
+            
             const rect = event.target.getBoundingClientRect();
             const x = (event.clientX - rect.left) / rect.width;
             const y = (event.clientY - rect.top) / rect.height;
             
-            sendCommand({
+            console.log('Click coordinates:', x, y);
+            
+            const command = {
                 type: 'mouse',
                 action: 'click',
                 x: x,
                 y: y,
                 button: event.button === 2 ? 'right' : 'left'
-            });
+            };
+            
+            console.log('Sending command:', command);
+            sendCommand(command);
         }
 
         function handleMouseMove(event) {
@@ -591,6 +598,8 @@ class RemoteControlServer:
         function sendCommand(command) {
             if (!currentSessionId) return;
             
+            console.log('Sending command to server:', command);
+            
             fetch('/api/command', {
                 method: 'POST',
                 headers: {
@@ -600,6 +609,11 @@ class RemoteControlServer:
                     sessionId: currentSessionId,
                     ...command
                 })
+            }).then(response => {
+                console.log('Command response:', response);
+                return response.json();
+            }).then(data => {
+                console.log('Command result:', data);
             }).catch(error => {
                 console.error('Command send error:', error);
             });
