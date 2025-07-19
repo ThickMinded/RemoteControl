@@ -717,7 +717,12 @@ def main():
     command = sys.argv[1].lower()
     
     if command == 'server':
-        port = int(sys.argv[2]) if len(sys.argv) > 2 else 8080
+        # Handle Railway's PORT environment variable
+        if len(sys.argv) > 2:
+            port = int(sys.argv[2])
+        else:
+            port = int(os.environ.get('PORT', 8080))
+        
         server = RemoteControlServer(port)
         server.start()
     
