@@ -1,0 +1,14 @@
+# Remote Control System - Python Dependencies
+# 
+# Core functionality works with Python standard library only
+# These are optional dependencies for enhanced features:
+
+# Screen capture (highly recommended for better performance)
+pillow>=9.0.0
+
+# Mouse and keyboard control (recommended for full functionality)
+pynput>=1.7.0
+
+# Note: If these dependencies fail to install or are not available,
+# the system will still work using Python standard library fallbacks
+# with reduced functionality (limited screen capture and basic input simulation)
