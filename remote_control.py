@@ -26,9 +26,15 @@ from urllib.parse import parse_qs, urlparse
 import socketserver
 from datetime import datetime, timedelta
 import queue
-import tkinter as tk
-from tkinter import messagebox
 import io
+
+# Try to import GUI dependencies (not available on headless cloud servers)
+try:
+    import tkinter as tk
+    from tkinter import messagebox
+    HAS_TKINTER = True
+except ImportError:
+    HAS_TKINTER = False
 
 # Try to import optional dependencies
 try:
