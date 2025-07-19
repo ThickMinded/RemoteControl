@@ -463,6 +463,9 @@ class RemoteControlServer:
             
             // Add mouse and keyboard event listeners
             addControlListeners();
+            
+            console.log('Connected to session:', sessionId);
+            console.log('Event listeners added');
         }
 
         function disconnectSession() {
@@ -504,12 +507,15 @@ class RemoteControlServer:
 
         function addControlListeners() {
             const screen = document.getElementById('screen');
+            console.log('Adding event listeners to screen element:', screen);
             
             screen.addEventListener('click', handleMouseClick);
             screen.addEventListener('mousemove', handleMouseMove);
             screen.addEventListener('wheel', handleMouseWheel);
             document.addEventListener('keydown', handleKeyDown);
             document.addEventListener('keyup', handleKeyUp);
+            
+            console.log('Event listeners added successfully');
         }
 
         function removeControlListeners() {
