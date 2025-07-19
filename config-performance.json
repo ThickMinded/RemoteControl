@@ -1,0 +1,15 @@
+{
+    "server_url": "https://web-production-463b89.up.railway.app",
+    "settings": {
+        "screen_fps": 15,
+        "screen_quality": 70,
+        "screen_width": 1280,
+        "screen_height": 720,
+        "command_check_interval": 0.03,
+        "connection_timeout": 5,
+        "retry_delay": 0.5,
+        "performance_mode": true,
+        "change_detection": true,
+        "compression_level": 6
+    }
+}

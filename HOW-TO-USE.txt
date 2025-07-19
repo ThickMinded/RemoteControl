@@ -1,0 +1,41 @@
+═══════════════════════════════════════════════════════════════════════════════
+                         REMOTE CONTROL SYSTEM - QUICK START
+═══════════════════════════════════════════════════════════════════════════════
+
+🚀 STEP 1: Run the Agent on Target Computer
+   - Double-click "run-agent.bat"
+   - Wait for it to install dependencies (first time only)
+   - Look for this message:
+
+   ════════════════════════════════════════
+   SUCCESS! Agent Active! Session ID: ABC123
+   ════════════════════════════════════════
+   COPY THIS SESSION ID TO YOUR CONTROLLER!
+   Session ID: ABC123
+
+🔗 STEP 2: Connect from Controller Computer
+   - Open web browser
+   - Go to: https://web-production-463b89.up.railway.app
+   - Enter the Session ID (ABC123 in example above)
+   - Click "Connect"
+
+🎮 STEP 3: Control the Remote Computer
+   - You'll see the remote screen
+   - Click to control mouse
+   - Type to control keyboard
+   - Use the buttons for special functions
+
+═══════════════════════════════════════════════════════════════════════════════
+
+💡 TIPS:
+   - The Session ID is ALWAYS displayed in a box with ═══ borders
+   - Copy it exactly as shown (usually 8 characters like "972E5B5F")
+   - The agent computer must stay running to maintain connection
+   - Works through firewalls and university networks
+
+❓ TROUBLESHOOTING:
+   - If Session ID doesn't appear: Check if Python is installed
+   - If can't connect: Make sure Session ID is copied exactly
+   - If screen is black: Agent might not have started properly
+
+═══════════════════════════════════════════════════════════════════════════════

@@ -157,12 +157,22 @@ class RemoteControlServer:
                 self.send_json_response(commands)
             
             def api_get_screen(self, session_id):
-                """API: Get latest screen data for a session"""
+                """API: Get latest screen data for a session (optimized)"""
                 if session_id in server_ref.screen_data:
                     screen_info = server_ref.screen_data[session_id]
-                    self.send_json_response(screen_info)
+                    
+                    # Add caching headers for better performance
+                    self.send_response(200)
+                    self.send_header('Content-Type', 'application/json')
+                    self.send_header('Cache-Control', 'no-cache, must-revalidate')
+                    self.send_header('Pragma', 'no-cache')
+                    self.end_headers()
+                    
+                    # Send response
+                    response = json.dumps(screen_info).encode('utf-8')
+                    self.wfile.write(response)
                 else:
-                    self.send_json_response({'error': 'No screen data available'})
+                    self.send_json_response({'error': 'No screen data available', 'data': None})
             
             def api_register(self):
                 """API: Register a new agent session"""
@@ -439,6 +449,7 @@ class RemoteControlServer:
         let currentSessionId = null;
         let screenUpdateInterval = null;
         let sessionsUpdateInterval = null;
+        let lastMouseMove = 0; // For throttling mouse movement
 
         function updateStatus(message, isConnected) {
             const statusEl = document.getElementById('status');
@@ -495,7 +506,7 @@ class RemoteControlServer:
                         console.error('Screen update error:', error);
                         document.getElementById('screenStatus').textContent = 'Screen update failed';
                     });
-            }, 1000);
+            }, 66);  // ~15 FPS (66ms) for smoother updates matching agent performance
         }
 
         function stopScreenUpdates() {
@@ -534,21 +545,33 @@ class RemoteControlServer:
             console.log('Mouse click detected!', event);
             
             const rect = event.target.getBoundingClientRect();
+            
+            // Calculate more accurate coordinates
             const x = (event.clientX - rect.left) / rect.width;
             const y = (event.clientY - rect.top) / rect.height;
             
-            console.log('Click coordinates:', x, y);
+            // Ensure coordinates are within bounds
+            const clampedX = Math.max(0, Math.min(1, x));
+            const clampedY = Math.max(0, Math.min(1, y));
+            
+            console.log('Click coordinates (relative):', clampedX, clampedY);
+            console.log('Screen rect:', rect);
+            console.log('Event position:', event.clientX, event.clientY);
             
             const command = {
                 type: 'mouse',
                 action: 'click',
-                x: x,
-                y: y,
+                x: clampedX,
+                y: clampedY,
                 button: event.button === 2 ? 'right' : 'left'
             };
             
             console.log('Sending command:', command);
             sendCommand(command);
+            
+            // Prevent default action and stop propagation
+            event.preventDefault();
+            event.stopPropagation();
         }
 
         function handleMouseMove(event) {
@@ -558,11 +581,20 @@ class RemoteControlServer:
             const x = (event.clientX - rect.left) / rect.width;
             const y = (event.clientY - rect.top) / rect.height;
             
+            // Throttle mouse movement to reduce server load
+            const now = Date.now();
+            if (now - lastMouseMove < 50) return; // Max 20 moves per second
+            lastMouseMove = now;
+            
+            // Ensure coordinates are within bounds
+            const clampedX = Math.max(0, Math.min(1, x));
+            const clampedY = Math.max(0, Math.min(1, y));
+            
             sendCommand({
                 type: 'mouse',
                 action: 'move',
-                x: x,
-                y: y
+                x: clampedX,
+                y: clampedY
             });
         }
 

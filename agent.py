@@ -19,6 +19,7 @@ from datetime import datetime
 # Try to import optional dependencies with fallbacks
 try:
     import PIL.ImageGrab as ImageGrab
+    from PIL import Image
     HAS_PIL = True
 except ImportError:
     HAS_PIL = False
@@ -47,13 +48,13 @@ def load_config():
         return {
             "server_url": "https://web-production-463b89.up.railway.app",
             "settings": {
-                "screen_fps": 1,
-                "screen_quality": 50,
-                "screen_width": 800,
-                "screen_height": 600,
-                "command_check_interval": 0.1,
+                "screen_fps": 10,  # Increased from 1 to 10 FPS for better responsiveness
+                "screen_quality": 60,  # Increased quality slightly
+                "screen_width": 1280,  # Higher resolution
+                "screen_height": 720,
+                "command_check_interval": 0.05,  # Reduced from 0.1 to 0.05 (50ms)
                 "connection_timeout": 10,
-                "retry_delay": 2
+                "retry_delay": 1  # Reduced retry delay
             }
         }
 
@@ -70,6 +71,7 @@ class RemoteControlAgent:
         self.settings = config.get('settings', {})
         self.last_screen_time = 0
         self.command_queue = []
+        self.last_screenshot_hash = None  # For change detection
 
     def start(self):
         """Start the remote control agent"""
@@ -149,7 +151,7 @@ class RemoteControlAgent:
 
     def screen_capture_loop(self):
         """Continuously capture and send screen updates"""
-        fps_delay = 1.0 / self.settings.get('screen_fps', 1)
+        fps_delay = 1.0 / self.settings.get('screen_fps', 10)
         
         while self.running:
             try:
@@ -159,10 +161,10 @@ class RemoteControlAgent:
                     if screen_data:
                         self.send_screen(screen_data)
                     self.last_screen_time = current_time
-                time.sleep(0.1)
+                time.sleep(0.01)  # Reduced sleep time for better responsiveness
             except Exception as e:
                 print(f"Screen capture error: {e}")
-                time.sleep(self.settings.get('retry_delay', 2))
+                time.sleep(self.settings.get('retry_delay', 1))
 
     def command_loop(self):
         """Continuously check for and execute remote commands"""
@@ -182,22 +184,32 @@ class RemoteControlAgent:
                 time.sleep(self.settings.get('retry_delay', 2))
 
     def capture_screen(self):
-        """Capture screen using PIL"""
+        """Capture screen using PIL with optimization"""
         if not HAS_PIL:
             return None
             
         try:
             screenshot = ImageGrab.grab()
             
-            # Resize for performance
-            width = self.settings.get('screen_width', 800)
-            height = self.settings.get('screen_height', 600)
-            screenshot = screenshot.resize((width, height))
+            # Quick hash check for change detection
+            import hashlib
+            screen_hash = hashlib.md5(screenshot.tobytes()).hexdigest()
             
-            # Convert to JPEG
+            # Only process if screen changed significantly
+            if screen_hash == self.last_screenshot_hash:
+                return None  # No change, skip this frame
+            
+            self.last_screenshot_hash = screen_hash
+            
+            # Resize for performance with better settings
+            width = self.settings.get('screen_width', 1280)
+            height = self.settings.get('screen_height', 720)
+            screenshot = screenshot.resize((width, height), Image.LANCZOS if hasattr(Image, 'LANCZOS') else 1)
+            
+            # Convert to JPEG with optimizations
             buffer = io.BytesIO()
-            quality = self.settings.get('screen_quality', 50)
-            screenshot.save(buffer, format='JPEG', quality=quality)
+            quality = self.settings.get('screen_quality', 60)
+            screenshot.save(buffer, format='JPEG', quality=quality, optimize=True)
             
             return base64.b64encode(buffer.getvalue()).decode()
         except Exception as e:
@@ -247,20 +259,35 @@ class RemoteControlAgent:
         """Handle mouse commands using pynput"""
         try:
             print(f"Handling mouse command: {command}")
-            x = int(command.get('x', 0) * 1920)  # Scale to screen
-            y = int(command.get('y', 0) * 1080)
+            
+            # Get actual screen dimensions
+            if HAS_PIL:
+                from PIL import ImageGrab
+                screen = ImageGrab.grab()
+                screen_width, screen_height = screen.size
+            else:
+                # Fallback to common resolution
+                screen_width, screen_height = 1920, 1080
+            
+            # Convert relative coordinates (0-1) to actual screen pixels
+            x = int(command.get('x', 0) * screen_width)
+            y = int(command.get('y', 0) * screen_height)
+            
+            # Ensure coordinates are within screen bounds
+            x = max(0, min(x, screen_width - 1))
+            y = max(0, min(y, screen_height - 1))
             
             mouse_controller = mouse.Controller()
             
             action = command.get('action')
             if action == 'move':
                 mouse_controller.position = (x, y)
-                print(f"Mouse moved to ({x}, {y})")
+                print(f"Mouse moved to ({x}, {y}) on {screen_width}x{screen_height} screen")
             elif action == 'click':
                 mouse_controller.position = (x, y)
                 button = mouse.Button.right if command.get('button') == 'right' else mouse.Button.left
                 mouse_controller.click(button)
-                print(f"Mouse clicked at ({x}, {y}) with {button}")
+                print(f"Mouse clicked at ({x}, {y}) with {button} on {screen_width}x{screen_height} screen")
             elif action == 'scroll':
                 dy = command.get('deltaY', 0)
                 mouse_controller.scroll(0, -dy // 120)  # Convert to scroll units
